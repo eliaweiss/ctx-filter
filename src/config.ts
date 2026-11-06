@@ -15,6 +15,8 @@ const JevConfig = z.object({
   model: z.string().default("typesafe-ai/jev-1.14.0"),
   /** Env var that holds the gateway key. */
   apiKeyEnv: z.string().default("AI_GATEWAY_API_KEY"),
+  /** Shell command that prints the key, used when the env var is unset (e.g. a macOS Keychain lookup). */
+  apiKeyCommand: z.string().optional(),
   /** Parallel gateway requests. */
   concurrency: z.number().int().min(1).max(16).default(4),
   /** Estimated tokens per request (Jev's cap is 64k for state + all questions). */
@@ -66,7 +68,20 @@ export function configPath(): string {
   return process.env.CTX_FILTER_CONFIG ?? join(HOME_DIR, "config.json");
 }
 
+/** Load <home>/.env (KEY=VALUE lines) into process.env for keys not already set. Hosts that start
+ * MCP servers with a scrubbed environment (DSH) still find AI_GATEWAY_API_KEY this way. */
+export function loadDotEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const file = join(HOME_DIR, ".env");
+  if (!existsSync(file)) return;
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!m || env[m[1]!]) continue;
+    env[m[1]!] = m[2]!.replace(/^(['"])(.*)\1$/, "$2");
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  loadDotEnv(env);
   const file = configPath();
   let raw: Record<string, unknown> = {};
   if (existsSync(file)) {

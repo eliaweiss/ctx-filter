@@ -32,7 +32,10 @@ server.registerTool(
     inputSchema: {
       command: z.string().min(1).describe("Shell command, run with bash -c."),
       want,
-      cwd: z.string().optional().describe("Working directory. Default: the server's cwd (the project)."),
+      cwd: z
+        .string()
+        .optional()
+        .describe("Working directory. Always pass your current working directory: the server may have been started elsewhere."),
       timeout_ms: z.number().int().min(1000).max(3_600_000).optional().describe("Default 600000."),
       provider,
     },

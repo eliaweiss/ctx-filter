@@ -1,5 +1,6 @@
 // Jev (or any decision model) through the Vercel AI Gateway, via the AI SDK's decide().
 // One boolean question per passage; the passage rides in the question, `want` is the shared state.
+import { execFileSync } from "node:child_process";
 import { createGateway } from "@ai-sdk/gateway";
 import { experimental_decide as decide, type Experimental_DecisionQuestion as Question } from "ai";
 import type { Config } from "../config.ts";
@@ -29,6 +30,20 @@ export function batchByTokens(passages: Chunk[], stateTokens: number, requestTok
   return batches;
 }
 
+let commandKey: string | undefined;
+
+/** The env var, else the output of apiKeyCommand (run once per process). */
+export function resolveApiKey(cfg: Config["jev"]): string {
+  const fromEnv = process.env[cfg.apiKeyEnv]?.trim();
+  if (fromEnv) return fromEnv;
+  if (cfg.apiKeyCommand) {
+    commandKey ??= execFileSync("/bin/sh", ["-c", cfg.apiKeyCommand], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (commandKey) return commandKey;
+    throw new Error(`jev.apiKeyCommand printed nothing`);
+  }
+  throw new Error(`${cfg.apiKeyEnv} is not set and no jev.apiKeyCommand is configured`);
+}
+
 export function question(p: Chunk): Question {
   return {
     type: "boolean",
@@ -50,8 +65,7 @@ export class JevJudge implements Judge {
   }
 
   async judge(input: JudgeInput): Promise<JudgeResult> {
-    const apiKey = process.env[this.cfg.apiKeyEnv]?.trim();
-    if (!apiKey) throw new Error(`${this.cfg.apiKeyEnv} is not set`);
+    const apiKey = resolveApiKey(this.cfg);
     const gateway = createGateway({ apiKey });
     const model = gateway.decisionModel(this.cfg.model);
     const state = { want: input.want, ...(input.source ? { source: input.source } : {}) };

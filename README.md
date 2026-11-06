@@ -43,7 +43,35 @@ Every field is optional. These are the defaults:
 
 Env overrides: `CTX_FILTER_PROVIDER=jev|d1|none`, `CTX_FILTER_JEV_MODEL`, `CTX_FILTER_THRESHOLD`, `CTX_FILTER_CONFIG` (another config file). The MCP tools also take a per-call `provider`.
 
-`jev` needs `AI_GATEWAY_API_KEY` in the environment of the MCP server or hook. Requests are sent with `zeroDataRetention: true`.
+`jev` reads `AI_GATEWAY_API_KEY`. If it is unset, it runs `jev.apiKeyCommand` once per process and uses its output. This matters for hosts that start MCP servers with a scrubbed environment (DSH). For example, with the key in the macOS Keychain:
+
+```json
+{ "jev": { "apiKeyCommand": "/usr/bin/security find-generic-password -s 'Vercel AI Gateway' -a 'vercel-ai-gateway' -w" } }
+```
+
+Requests are sent with `zeroDataRetention: true`.
+
+### DeepSeek Harness (DSH)
+
+Add to the profile's `cordis.patch.yml` (e.g. `~/.dsh/profiles/desktop/cordis.patch.yml`):
+
+```yaml
+- insert:
+    - id: mcp-ctx-filter
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: ctx-filter
+        transport: stdio
+        command: /opt/homebrew/bin/node
+        args:
+          - /Users/eliaweiss/work/ctx-filter/dist/server.js
+        toolCallTimeoutMs: 900000
+        failOnStartupError: false
+        env:
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+```
+
+DSH has no Bash hook, so the instruction in `~/.dsh/AGENTS.md` (below) is what makes the model use `run`.
 
 `d1` starts `python/d1_server.py` on first use. The daemon keeps the model loaded, listens on `~/.ctx-filter/d1.sock`, logs to `~/.ctx-filter/d1.log`, and exits after 30 idle minutes. To start it ahead of time: `node dist/cli.js d1-start`.
 
