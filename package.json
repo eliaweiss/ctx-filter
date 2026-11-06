@@ -1,0 +1,30 @@
+{
+  "name": "ctx-filter",
+  "version": "0.1.0",
+  "description": "Run a command, keep the full output on disk, and return only the lines a small decision model judges relevant to what the agent wants.",
+  "type": "module",
+  "bin": {
+    "ctx-filter-mcp": "dist/server.js",
+    "ctx-filter-hook": "dist/hook.js",
+    "ctx-filter": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test --experimental-strip-types --no-warnings tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/gateway": "^4.0.136",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ai": "^7.0.163",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
