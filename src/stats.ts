@@ -183,6 +183,7 @@ export function report(events: CallEvent[], o: StatsOptions): string {
   L.push(`  tool calls failed:                 ${failed.length}${failed.length ? "  ← " + failed.slice(-3).map((e) => `${e.tool}: ${e.error}`).join(" | ") : ""}`);
   L.push(`  model unavailable (pre-rank used): ${fallback.length}${fallback.length ? "  ← " + [...new Set(fallback.map((e) => e.judgeError))].slice(0, 2).join(" | ") : ""}`);
   L.push(`  model ran out of time (partial):   ${partial.length}`);
+  L.push(`  model requests split for size:     ${sum(evs.map((e) => e.modelSplits ?? 0))} (rejected as too large, halved and retried; nothing lost)`);
   L.push(`  nothing judged relevant:           ${below.length}`);
   L.push(`  relevant passages did not fit:     ${overflow.length}`);
   L.push(`  filtered outputs needing a follow-up: ${withFollow} of ${replacedIds.size}${replacedIds.size ? ` (${Math.round((100 * withFollow) / replacedIds.size)}%)` : ""}   ← a rough miss rate`);

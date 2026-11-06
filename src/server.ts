@@ -48,7 +48,7 @@ server.registerTool(
   "run",
   {
     description:
-      "Run a shell command and get back only the parts of its output that answer `want`. Use it instead of Bash for anything that may print more than ~50 lines: tests, builds, installs, logs, git log/diff, curl, CLI JSON. Output up to 4 KB comes back whole. Larger output is stored in full; a small decision model keeps the passages relevant to `want` (verbatim, with line numbers). The footer gives an id for filter/read_output/grep_output to get more.",
+      "Run a shell command and get back only the parts of its output that answer `want`. Use it instead of Bash for anything that may print more than ~50 lines: tests, builds, installs, logs, git log/diff, curl, CLI JSON, page snapshots or JSON a script prints. Not for starting long-running processes (a browser, a dev server): use Bash in the background for those. Output up to 4 KB comes back whole. Larger output is stored in full; a small decision model keeps the passages relevant to `want` (verbatim, with line numbers). The footer gives an id for filter/read_output/grep_output to get more.",
     inputSchema: {
       command: z.string().min(1).describe("Shell command, run with bash -c."),
       want,

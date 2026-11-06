@@ -16,6 +16,8 @@ export interface JudgeUsage {
   outputTokens: number;
   /** Exact gateway charge in USD; 0 for local d1. */
   costUsd: number;
+  /** Requests the model rejected as too large and that were split in half and retried. */
+  splits: number;
 }
 
 export interface JudgeResult {
@@ -27,7 +29,7 @@ export interface JudgeResult {
 }
 
 export function emptyUsage(): JudgeUsage {
-  return { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  return { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, splits: 0 };
 }
 
 export interface Judge {

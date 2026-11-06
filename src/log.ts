@@ -52,6 +52,8 @@ export interface CallEvent {
   modelRequests?: number;
   modelInputTokens?: number;
   modelOutputTokens?: number;
+  /** Model requests rejected as too large, then split and retried. */
+  modelSplits?: number;
   costUsd?: number;
 }
 
@@ -74,6 +76,7 @@ export function outcomeFields(out: FilterOutcome): Partial<CallEvent> {
     modelRequests: out.usage.requests,
     modelInputTokens: out.usage.inputTokens,
     modelOutputTokens: out.usage.outputTokens,
+    modelSplits: out.usage.splits,
     costUsd: out.usage.costUsd,
   };
 }

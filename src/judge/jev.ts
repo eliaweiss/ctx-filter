@@ -7,9 +7,15 @@ import type { Config } from "../config.ts";
 import type { Chunk } from "../chunk.ts";
 import { emptyUsage, RELEVANCE_FALSE, RELEVANCE_QUESTION, RELEVANCE_TRUE, type Judge, type JudgeInput, type JudgeResult } from "./types.ts";
 
-/** Log text tokenizes worse than prose; count 1 token per 3 bytes plus fixed overhead per question. */
+/** Log text tokenizes worse than prose: 1 token per 3 bytes, plus the question text and criteria (~190 tokens,
+ * measured against Jev's reported usage on a git log and a Playwright log). */
 export function estimateTokens(bytes: number): number {
-  return Math.ceil(bytes / 3) + 120;
+  return Math.ceil(bytes / 3) + 190;
+}
+
+/** Jev's answer when a request is over its token limit: 400 {"error_type":"max_tokens_exceeded"}. */
+export function isTooLarge(e: unknown): boolean {
+  return /max_tokens_exceeded|too (many|large)|context length|token limit/i.test(String((e as Error)?.message ?? e));
 }
 
 export function batchByTokens(passages: Chunk[], stateTokens: number, requestTokens: number): Chunk[][] {
@@ -76,10 +82,19 @@ export class JevJudge implements Judge {
     const usage = emptyUsage();
     const timeout = Math.max(1, input.deadline - Date.now());
     const signal = AbortSignal.timeout(timeout);
-    let next = 0;
+    // A work queue: a request Jev rejects as too large is split in half and both halves go back in,
+    // down to one passage per request, so no passage is lost to the size limit.
+    const queue = [...batches];
+    let inFlight = 0;
     const worker = async () => {
-      while (next < batches.length && !signal.aborted) {
-        const batch = batches[next++]!;
+      while (!signal.aborted) {
+        const batch = queue.shift();
+        if (!batch) {
+          if (inFlight === 0) return;
+          await new Promise((r) => setTimeout(r, 20)); // a running request may still split into new work
+          continue;
+        }
+        inFlight++;
         try {
           const res = await decide({
             model,
@@ -99,11 +114,19 @@ export class JevJudge implements Judge {
           const cost = Number((res.providerMetadata?.gateway as { cost?: unknown } | undefined)?.cost);
           if (Number.isFinite(cost)) usage.costUsd += cost;
         } catch (e) {
-          errors.push(signal.aborted ? "time budget reached" : (e as Error).message);
+          if (!signal.aborted && isTooLarge(e) && batch.length > 1) {
+            const mid = Math.ceil(batch.length / 2);
+            queue.unshift(batch.slice(0, mid), batch.slice(mid));
+            usage.splits++;
+          } else {
+            errors.push(signal.aborted ? "time budget reached" : (e as Error).message);
+          }
+        } finally {
+          inFlight--;
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(this.cfg.concurrency, batches.length) }, worker));
+    await Promise.all(Array.from({ length: this.cfg.concurrency }, worker));
     if (probs.size === 0 && errors.length > 0) throw new Error(errors[0]);
     const missing = input.passages.length - probs.size;
     return { probs, usage, note: missing > 0 ? `${missing} passages not judged (${errors[0] ?? "time budget reached"})` : undefined };

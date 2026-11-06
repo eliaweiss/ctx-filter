@@ -19,8 +19,9 @@ const JevConfig = z.object({
   apiKeyCommand: z.string().optional(),
   /** Parallel gateway requests. */
   concurrency: z.number().int().min(1).max(16).default(4),
-  /** Estimated tokens per request (Jev's cap is 64k for state + all questions). */
-  requestTokens: z.number().int().min(2000).max(64000).default(56000),
+  /** Estimated tokens per request. Jev's cap is 64k for state + all questions; the estimate runs up to ~20%
+   * low on glyph-heavy logs, so 48k leaves headroom. A request Jev still rejects is split and retried. */
+  requestTokens: z.number().int().min(2000).max(64000).default(48000),
   /** Most output bytes sent to the model per filter call; the rest is pre-ranked away. */
   maxJudgeBytes: z.number().int().min(1024).default(256 * 1024),
   zeroDataRetention: z.boolean().default(true),
