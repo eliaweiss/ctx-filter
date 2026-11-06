@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HOME_DIR, type Config } from "../config.ts";
 import type { Chunk } from "../chunk.ts";
-import { RELEVANCE_FALSE, RELEVANCE_QUESTION, RELEVANCE_TRUE, type Judge, type JudgeInput, type JudgeResult } from "./types.ts";
+import { emptyUsage, RELEVANCE_FALSE, RELEVANCE_QUESTION, RELEVANCE_TRUE, type Judge, type JudgeInput, type JudgeResult } from "./types.ts";
 
 const SOCKET = join(HOME_DIR, "d1.sock");
 const LOG = join(HOME_DIR, "d1.log");
@@ -23,6 +23,7 @@ const QUESTION = {
 
 interface D1Reply {
   results?: Array<Record<string, { noul?: number }>>;
+  usage?: Array<{ input_tokens?: number }>;
   error?: string;
 }
 
@@ -105,6 +106,7 @@ export class D1Judge implements Judge {
   async judge(input: JudgeInput): Promise<JudgeResult> {
     await ensureDaemon(this.cfg);
     const probs = new Map<number, number>();
+    const usage = emptyUsage();
     const state = (p: Chunk) => ({ want: input.want, passage: p.text });
     for (let i = 0; i < input.passages.length; i += this.cfg.batchSize) {
       const left = input.deadline - Date.now();
@@ -113,12 +115,14 @@ export class D1Judge implements Judge {
       // A batch already sent finishes even past the deadline; the wait is bounded by the batch size.
       const reply = await request({ requests: batch.map((p) => ({ state: state(p), questions: QUESTION })) }, Math.max(left, 15000));
       if (reply.error) throw new Error(`d1: ${reply.error}`);
+      usage.requests++;
+      for (const u of reply.usage ?? []) usage.inputTokens += u.input_tokens ?? 0;
       reply.results?.forEach((answers, j) => {
         const p = answers.rel?.noul;
         if (typeof p === "number") probs.set(batch[j]!.index, p);
       });
     }
     const missing = input.passages.length - probs.size;
-    return { probs, note: missing > 0 ? `${missing} passages not judged (time budget reached)` : undefined };
+    return { probs, usage, note: missing > 0 ? `${missing} passages not judged (time budget reached)` : undefined };
   }
 }

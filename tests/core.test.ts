@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -31,7 +31,7 @@ function playwrightLog(): string {
 const fakeJudge = (pick: (text: string) => number): Judge => ({
   name: "fake",
   async judge(input) {
-    return { probs: new Map(input.passages.map((p) => [p.index, pick(p.text)])) };
+    return { probs: new Map(input.passages.map((p) => [p.index, pick(p.text)])), usage: { requests: 1, inputTokens: 100, outputTokens: 1, costUsd: 0.0001 } };
   },
 });
 
@@ -62,7 +62,7 @@ test("small output comes back whole, no model call", async () => {
   const cfg = ConfigSchema.parse({});
   let called = false;
   const out = await filterText("hello\n", "anything", cfg, {
-    judge: { name: "x", judge: async () => ((called = true), { probs: new Map() }) },
+    judge: { name: "x", judge: async () => ((called = true), { probs: new Map(), usage: { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 } }) },
   });
   assert.equal(out.whole, true);
   assert.equal(called, false);
@@ -141,6 +141,13 @@ test("hook: small Bash output passes through, large output is replaced in Bash's
   assert.equal(upd.persistedOutputPath, undefined);
   assert.match(upd.stdout, /\[ctx-filter\]/);
   assert.match(upd.stdout, /full output: .*\.log/);
+  const events = readFileSync(join(home, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const last = events.at(-1);
+  assert.equal(last.tool, "hook:Bash");
+  assert.equal(last.ok, true);
+  assert.equal(last.rawChars, playwrightLog().length);
+  assert.equal(last.replyChars, upd.stdout.length);
+  assert.equal(last.want, "Run e2e tests; which failed and why");
 });
 
 test("hook: garbage input never fails the tool call", () => {

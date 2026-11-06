@@ -3,7 +3,7 @@ import { chunkText, type Chunk } from "./chunk.ts";
 import type { Config, Provider } from "./config.ts";
 import { D1Judge } from "./judge/d1.ts";
 import { JevJudge } from "./judge/jev.ts";
-import type { Judge } from "./judge/types.ts";
+import { emptyUsage, type Judge, type JudgeUsage } from "./judge/types.ts";
 import { pickCandidates, prerank } from "./prerank.ts";
 
 export interface Kept {
@@ -22,6 +22,17 @@ export interface FilterOutcome {
   belowThreshold: boolean;
   notes: string[];
   ms: number;
+  /** Time spent waiting on the model. */
+  judgeMs: number;
+  usage: JudgeUsage;
+  /** The model failed outright and the pre-rank picked the passages. */
+  fallback: boolean;
+  /** The model's error, when it failed outright. */
+  judgeError?: string;
+  /** Some candidate passages were not judged (time budget or a failed batch). */
+  partial: boolean;
+  /** Passages judged relevant that did not fit the return budget. */
+  overflow: number;
 }
 
 export function makeJudge(provider: Provider, cfg: Config): Judge | null {
@@ -43,16 +54,25 @@ export async function filterText(
   const t0 = Date.now();
   const provider = opts.provider ?? cfg.provider;
   if (Buffer.byteLength(text) <= cfg.triggerBytes) {
-    return { whole: true, kept: [], totalPassages: 0, judged: 0, judge: "none", belowThreshold: false, notes: [], ms: 0 };
+    return {
+      whole: true, kept: [], totalPassages: 0, judged: 0, judge: "none", belowThreshold: false, notes: [], ms: 0,
+      judgeMs: 0, usage: emptyUsage(), fallback: false, partial: false, overflow: 0,
+    };
   }
   const chunks = chunkText(text, cfg.chunkBytes);
   const order = prerank(chunks, want);
   const notes: string[] = [];
   const judge = opts.judge !== undefined ? opts.judge : makeJudge(provider, cfg);
   let probs = new Map<number, number>();
+  let usage = emptyUsage();
+  let judgeMs = 0;
+  let fallback = false;
+  let judgeError: string | undefined;
+  let partial = false;
   if (judge) {
     const candidates = pickCandidates(chunks, order, judgeBudget(provider, cfg));
     if (candidates.length < chunks.length) notes.push(`${chunks.length - candidates.length} lower-ranked passages were not sent to the model`);
+    const tj = Date.now();
     try {
       const res = await judge.judge({
         want,
@@ -61,10 +81,15 @@ export async function filterText(
         deadline: t0 + cfg.judgeTimeoutMs,
       });
       probs = res.probs;
+      usage = res.usage;
+      partial = res.probs.size < candidates.length;
       if (res.note) notes.push(res.note);
     } catch (e) {
-      notes.push(`model unavailable (${(e as Error).message}); passages picked by keyword pre-rank`);
+      fallback = true;
+      judgeError = (e as Error).message;
+      notes.push(`model unavailable (${judgeError}); passages picked by keyword pre-rank`);
     }
+    judgeMs = Date.now() - tj;
   } else {
     notes.push("no model configured; passages picked by keyword pre-rank");
   }
@@ -103,6 +128,12 @@ export async function filterText(
     belowThreshold,
     notes,
     ms: Date.now() - t0,
+    judgeMs,
+    usage,
+    fallback,
+    judgeError,
+    partial,
+    overflow: probs.size > 0 && !belowThreshold ? dropped : 0,
   };
 }
 

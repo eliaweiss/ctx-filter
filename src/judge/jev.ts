@@ -5,7 +5,7 @@ import { createGateway } from "@ai-sdk/gateway";
 import { experimental_decide as decide, type Experimental_DecisionQuestion as Question } from "ai";
 import type { Config } from "../config.ts";
 import type { Chunk } from "../chunk.ts";
-import { RELEVANCE_FALSE, RELEVANCE_QUESTION, RELEVANCE_TRUE, type Judge, type JudgeInput, type JudgeResult } from "./types.ts";
+import { emptyUsage, RELEVANCE_FALSE, RELEVANCE_QUESTION, RELEVANCE_TRUE, type Judge, type JudgeInput, type JudgeResult } from "./types.ts";
 
 /** Log text tokenizes worse than prose; count 1 token per 3 bytes plus fixed overhead per question. */
 export function estimateTokens(bytes: number): number {
@@ -73,6 +73,7 @@ export class JevJudge implements Judge {
     const batches = batchByTokens(input.passages, stateTokens, this.cfg.requestTokens);
     const probs = new Map<number, number>();
     const errors: string[] = [];
+    const usage = emptyUsage();
     const timeout = Math.max(1, input.deadline - Date.now());
     const signal = AbortSignal.timeout(timeout);
     let next = 0;
@@ -92,6 +93,11 @@ export class JevJudge implements Judge {
             const a = (res.answers as Record<string, { type: string; probability?: number }>)[`p${p.index}`];
             if (a?.type === "boolean" && typeof a.probability === "number") probs.set(p.index, a.probability);
           }
+          usage.requests++;
+          usage.inputTokens += res.usage?.inputTokens ?? 0;
+          usage.outputTokens += res.usage?.outputTokens ?? 0;
+          const cost = Number((res.providerMetadata?.gateway as { cost?: unknown } | undefined)?.cost);
+          if (Number.isFinite(cost)) usage.costUsd += cost;
         } catch (e) {
           errors.push(signal.aborted ? "time budget reached" : (e as Error).message);
         }
@@ -100,6 +106,6 @@ export class JevJudge implements Judge {
     await Promise.all(Array.from({ length: Math.min(this.cfg.concurrency, batches.length) }, worker));
     if (probs.size === 0 && errors.length > 0) throw new Error(errors[0]);
     const missing = input.passages.length - probs.size;
-    return { probs, note: missing > 0 ? `${missing} passages not judged (${errors[0] ?? "time budget reached"})` : undefined };
+    return { probs, usage, note: missing > 0 ? `${missing} passages not judged (${errors[0] ?? "time budget reached"})` : undefined };
   }
 }

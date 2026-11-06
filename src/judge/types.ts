@@ -9,11 +9,25 @@ export interface JudgeInput {
   deadline: number;
 }
 
+export interface JudgeUsage {
+  /** Model round trips (gateway requests or d1 socket batches). */
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Exact gateway charge in USD; 0 for local d1. */
+  costUsd: number;
+}
+
 export interface JudgeResult {
   /** chunk index -> P(relevant). Passages missing here were not judged (time or failure). */
   probs: Map<number, number>;
   /** Set when some or all passages were not judged. */
   note?: string;
+  usage: JudgeUsage;
+}
+
+export function emptyUsage(): JudgeUsage {
+  return { requests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
 }
 
 export interface Judge {

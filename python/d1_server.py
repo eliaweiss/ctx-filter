@@ -61,7 +61,11 @@ class Handler(socketserver.StreamRequestHandler):
             pairs = [(r["state"], r["questions"]) for r in req["requests"]]
             t = time.time()
             out = model.system_one_batch(pairs)
-            reply = {"results": [o["answers"] for o in out], "ms": round((time.time() - t) * 1000)}
+            reply = {
+                "results": [o["answers"] for o in out],
+                "usage": [o.get("usage", {}) for o in out],
+                "ms": round((time.time() - t) * 1000),
+            }
         except Exception as e:  # report to the client, keep serving
             reply = {"error": f"{type(e).__name__}: {e}"}
         last_used = time.time()

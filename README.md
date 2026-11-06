@@ -120,6 +120,23 @@ node dist/cli.js file app.log --want "every 5xx request and its path" --provider
 node dist/cli.js config
 ```
 
+## Logs and stats
+
+Every MCP call and every hook replacement appends one line to `~/.ctx-filter/events.jsonl`. Each line records the host, tool, command, want, raw and returned sizes, passages judged and kept, command time, filter time, model time, model tokens, the exact gateway cost, and failure flags. CLI `run`/`file` calls are not logged, so manual tests stay out of session stats.
+
+```bash
+node dist/cli.js stats --since 13:10 --timeline     # or --since 30m, --until …, --client dsh-mcp-client
+```
+
+The report covers:
+
+- **Context:** net estimated tokens saved (4 characters per token, as DSH estimates). The baseline is what the host would have shown without ctx-filter: the raw output, capped at the host's own limit (`--cap`, default 12,500 tokens, DSH's `spill-policy.maxInlineTokens`). From that it subtracts the replies, the extra arguments (`want`, `cwd`), every follow-up call (`filter` by id, `read_output`, `grep_output`), and the fixed cost of the tool definitions plus the ctx-filter instruction section (× `--sessions`).
+- **Cost:** the exact gateway charge for each Jev call.
+- **Delay:** the filter time added per output (p50/p95/max), the time spent waiting on the model, and the follow-up count. Each follow-up also costs an extra agent turn, which the report counts but cannot time.
+- **Failures:** failed calls, model unavailable (the cheap pre-rank was used instead), model out of time, nothing judged relevant, relevant passages that didn't fit, and the share of filtered outputs that needed a follow-up (a rough miss rate).
+
+After rebuilding, change `CTX_FILTER_BUILD` in the DSH patch entry so DSH restarts the server.
+
 ## Tests
 
 ```bash
