@@ -43,8 +43,11 @@ for (const f of files) {
 // a deterministic spread: newest few per tool
 const byTool = new Map();
 for (const c of cands.reverse()) { const l = byTool.get(c.tool) ?? []; if (l.length < perTool) l.push(c); byTool.set(c.tool, l); }
-const picked = [...byTool.values()].flat();
+const seenText = new Set();
+const picked = [...byTool.values()].flat().filter((c) => (seenText.has(c.text) ? false : (seenText.add(c.text), true)));
 console.error(`${cands.length} eligible results; replaying ${picked.length}`);
+// Strict: identifier-like tokens only (paths, names with . _ / : -, numbers, CamelCase), not ordinary words.
+const strict = (s) => new Set((s.match(/[A-Za-z0-9_][\w./:-]{4,}/g) ?? []).map((w) => w.replace(/[.:,]+$/, "")).filter((w) => /[\d_/:-]|\.[a-z]|[a-z][A-Z]/.test(w) && w.length >= 5));
 const distinct = (s) => new Set((s.match(/[A-Za-z_][\w./:-]{5,}|\b\d[\d,.:]{2,}\b/g) ?? []).filter((w) => !/^(https?|the|this|that)/i.test(w)));
 const rows = [];
 for (const c of picked) {
@@ -64,7 +67,9 @@ for (const c of picked) {
   // details the agent used next that came from this output
   const used = [...distinct(c.next)].filter((w) => c.text.includes(w));
   const lost = used.filter((w) => !out.includes(w));
-  rows.push({ tool: c.name, tokens: c.tok, action, keptTokens: estimateTokens(out), relevant: `${rel}/${probs.size}`, maxP: probs.size ? Math.max(...probs.values()).toFixed(2) : "-", ms, cost: usage?.costUsd ?? 0, used: used.length, lost: lost.length, lostSample: lost.slice(0, 6), wantParts: want.parts, cmd: (c.args.command ?? c.args.url ?? c.args.pattern ?? JSON.stringify(c.args)).slice(0, 90), err });
+  const usedStrict = [...strict(c.next)].filter((w) => c.text.includes(w));
+  const lostStrict = usedStrict.filter((w) => !out.includes(w));
+  rows.push({ tool: c.name, tokens: c.tok, action, keptTokens: estimateTokens(out), relevant: `${rel}/${probs.size}`, maxP: probs.size ? Math.max(...probs.values()).toFixed(2) : "-", ms, cost: usage?.costUsd ?? 0, used: used.length, lost: lost.length, usedStrict: usedStrict.length, lostStrict: lostStrict.length, lostStrictSample: lostStrict.slice(0, 6), hash: c.text.length + ":" + c.text.slice(0, 200), lostSample: lost.slice(0, 6), wantParts: want.parts, cmd: (c.args.command ?? c.args.url ?? c.args.pattern ?? JSON.stringify(c.args)).slice(0, 90), err });
 }
 writeFileSync("/tmp/cfx-replay.json", JSON.stringify(rows, null, 2));
 for (const r of rows) console.log(`${r.action.padEnd(15)} ${r.tool.slice(0, 34).padEnd(34)} ${String(r.tokens).padStart(6)} → ${String(r.keptTokens).padStart(6)}  rel ${r.relevant.padStart(7)} max ${r.maxP}  used ${r.used} lost ${r.lost} ${r.lost ? JSON.stringify(r.lostSample) : ""}  ${r.ms}ms $${r.cost.toFixed(5)}  | ${r.cmd}${r.err ? " ERR " + r.err : ""}`);
