@@ -86,7 +86,8 @@ export function computeStats(events, { days, priceInputPerM, priceCachedPerM, se
   const allTokens = seen.reduce((a, e) => a + (e.tokensBefore ?? 0), 0);
   const savedOnce = filtered.reduce((a, e) => a + Math.max(0, e.tokensBefore - e.tokensAfter), 0);
   const shadowWouldSave = shadow.reduce((a, e) => a + Math.max(0, e.tokensBefore - e.tokensAfter), 0);
-  const jevCost = judgedRuns.reduce((a, e) => a + (e.jev?.costUsd ?? 0), 0) + seen.filter((e) => e.action === "jev-error").reduce((a, e) => a + (e.jev?.costUsd ?? 0), 0);
+  // Every Jev call costs, including runs that ended up passing the result through.
+  const jevCost = seen.reduce((a, e) => a + (e.jev?.costUsd ?? 0), 0);
   const jevIn = judgedRuns.reduce((a, e) => a + (e.jev?.inputTokens ?? 0), 0);
   const jevOut = judgedRuns.reduce((a, e) => a + (e.jev?.outputTokens ?? 0), 0);
   const delays = judgedRuns.map((e) => e.ms ?? 0);
@@ -139,7 +140,7 @@ export function computeStats(events, { days, priceInputPerM, priceCachedPerM, se
     b.jevCost += e.jev?.costUsd ?? 0;
   }
   const recent = seen
-    .filter((e) => ["filtered", "shadow", "jev-error", "no-gain"].includes(e.action))
+    .filter((e) => ["filtered", "shadow", "jev-error", "no-gain", "mostly-relevant"].includes(e.action))
     .slice(-60)
     .reverse()
     .map((e) => ({ ...e, followedUp: followupCalls.has(e.callId) }));
