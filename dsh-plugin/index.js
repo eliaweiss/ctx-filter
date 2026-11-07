@@ -30,6 +30,7 @@ export const Config = z.object({
   maxTokens: int(12500, 0, "Results above this many tokens are left to DSH's own spill cap."),
   keepPercent: z.number().min(1).max(100).default(30).description("Most of the result kept, in percent.").volatile(),
   passThroughRelevantPercent: z.number().min(1).max(100).default(60).description("When Jev judges at least this share of the passages relevant, the result is mostly signal and passes through whole (100: never).").volatile(),
+  passThroughWhenNothingRelevant: bool(true, "When Jev judges no passage relevant, the want probably missed; pass the result through whole instead of keeping only head, tail and errors."),
   relevanceThreshold: z.number().min(0).max(1).default(0.5).description("A passage is relevant when Jev's probability is at least this.").volatile(),
   excludedTools: z.array(z.string()).default(["read", "skill", "plugin_manager"]).description("Tools whose results are never filtered. An entry ending in * matches a prefix.").volatile(),
   skipFilePrints: bool(true, "Do not filter bash commands that print files (cat, sed -n, head, tail)."),
@@ -241,9 +242,14 @@ async function filterDecision(ctx, cfg, exec, result, decision, log, locators) {
     jev,
     judgedRelevant,
     relevantShare: Math.round(relevantShare * 1000) / 1000,
+    maxProbability: probs.size > 0 ? Math.round(Math.max(...probs.values()) * 1000) / 1000 : undefined,
     want: cfg.logWant ? want.text : undefined,
     wantParts: want.parts,
   };
+  if (cfg.keepRelevant && probs.size > 0 && judgedRelevant === 0 && cfg.passThroughWhenNothingRelevant) {
+    log({ ...detail, action: "nothing-relevant", tokensAfter: tokensBefore });
+    return decision;
+  }
   if (cfg.keepRelevant && probs.size > 0 && cfg.passThroughRelevantPercent < 100 && relevantShare * 100 >= cfg.passThroughRelevantPercent) {
     log({ ...detail, action: "mostly-relevant", tokensAfter: tokensBefore });
     return decision;

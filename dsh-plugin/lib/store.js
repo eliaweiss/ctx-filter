@@ -140,7 +140,7 @@ export function computeStats(events, { days, priceInputPerM, priceCachedPerM, se
     b.jevCost += e.jev?.costUsd ?? 0;
   }
   const recent = seen
-    .filter((e) => ["filtered", "shadow", "jev-error", "no-gain", "mostly-relevant"].includes(e.action))
+    .filter((e) => ["filtered", "shadow", "jev-error", "no-gain", "mostly-relevant", "nothing-relevant"].includes(e.action))
     .slice(-60)
     .reverse()
     .map((e) => ({ ...e, followedUp: followupCalls.has(e.callId) }));

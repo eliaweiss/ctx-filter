@@ -59,12 +59,12 @@ for (const c of picked) {
   const share = probs.size ? rel / probs.size : 0;
   const sel = selectLines(lines, passages, probs, cfg);
   const kept = renderKept(lines, sel.keep);
-  const action = err ? "jev-error" : share * 100 >= cfg.passThroughRelevantPercent ? "mostly-relevant" : estimateTokens(kept) > c.tok * 0.8 ? "no-gain" : "filtered";
+  const action = err ? "jev-error" : probs.size && rel === 0 ? "nothing-relevant" : share * 100 >= cfg.passThroughRelevantPercent ? "mostly-relevant" : estimateTokens(kept) > c.tok * 0.8 ? "no-gain" : "filtered";
   const out = action === "filtered" ? kept : c.text;
   // details the agent used next that came from this output
   const used = [...distinct(c.next)].filter((w) => c.text.includes(w));
   const lost = used.filter((w) => !out.includes(w));
-  rows.push({ tool: c.name, tokens: c.tok, action, keptTokens: estimateTokens(out), relevant: `${rel}/${probs.size}`, ms, cost: usage?.costUsd ?? 0, used: used.length, lost: lost.length, lostSample: lost.slice(0, 6), wantParts: want.parts, cmd: (c.args.command ?? c.args.url ?? c.args.pattern ?? JSON.stringify(c.args)).slice(0, 90), err });
+  rows.push({ tool: c.name, tokens: c.tok, action, keptTokens: estimateTokens(out), relevant: `${rel}/${probs.size}`, maxP: probs.size ? Math.max(...probs.values()).toFixed(2) : "-", ms, cost: usage?.costUsd ?? 0, used: used.length, lost: lost.length, lostSample: lost.slice(0, 6), wantParts: want.parts, cmd: (c.args.command ?? c.args.url ?? c.args.pattern ?? JSON.stringify(c.args)).slice(0, 90), err });
 }
 writeFileSync("/tmp/cfx-replay.json", JSON.stringify(rows, null, 2));
-for (const r of rows) console.log(`${r.action.padEnd(15)} ${r.tool.slice(0, 34).padEnd(34)} ${String(r.tokens).padStart(6)} → ${String(r.keptTokens).padStart(6)}  rel ${r.relevant.padStart(7)}  used ${r.used} lost ${r.lost} ${r.lost ? JSON.stringify(r.lostSample) : ""}  ${r.ms}ms $${r.cost.toFixed(5)}  | ${r.cmd}${r.err ? " ERR " + r.err : ""}`);
+for (const r of rows) console.log(`${r.action.padEnd(15)} ${r.tool.slice(0, 34).padEnd(34)} ${String(r.tokens).padStart(6)} → ${String(r.keptTokens).padStart(6)}  rel ${r.relevant.padStart(7)} max ${r.maxP}  used ${r.used} lost ${r.lost} ${r.lost ? JSON.stringify(r.lostSample) : ""}  ${r.ms}ms $${r.cost.toFixed(5)}  | ${r.cmd}${r.err ? " ERR " + r.err : ""}`);
