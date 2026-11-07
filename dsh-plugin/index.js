@@ -32,7 +32,7 @@ export const Config = z.object({
   passThroughRelevantPercent: z.number().min(1).max(100).default(60).description("When Jev judges at least this share of the passages relevant, the result is mostly signal and passes through whole (100: never).").volatile(),
   passThroughWhenNothingRelevant: bool(true, "When Jev judges no passage relevant, the want probably missed; pass the result through whole instead of keeping only head, tail and errors."),
   relevanceThreshold: z.number().min(0).max(1).default(0.5).description("A passage is relevant when Jev's probability is at least this.").volatile(),
-  excludedTools: z.array(z.string()).default(["read", "skill", "plugin_manager"]).description("Tools whose results are never filtered. An entry ending in * matches a prefix.").volatile(),
+  excludedTools: z.array(z.string()).default(["read", "skill", "plugin_manager", "grep", "glob"]).description("Tools whose results are never filtered. An entry ending in * matches a prefix.").volatile(),
   skipFilePrints: bool(true, "Do not filter bash commands that print files (cat, sed -n, head, tail)."),
   wantToolCall: bool(true, "Want: the tool call and its arguments."),
   wantDescription: bool(true, "Want: the call's description field."),

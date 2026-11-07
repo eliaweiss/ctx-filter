@@ -45,6 +45,7 @@ test("small results and excluded tools pass through", async () => {
   const big = { content: [{ type: "text", text: bigOutput() }] };
   const r = await post({ ...exec({}), name: "read" }, big, async () => ({ kind: "accept" }));
   assert.deepEqual(r, { kind: "accept" });
+  for (const name of ["grep", "glob"]) assert.deepEqual(await post({ ...exec({}), name }, big, async () => ({ kind: "accept" })), { kind: "accept" });
   const fp = await post(exec({ command: "cat src/x.ts" }), big, async () => ({ kind: "accept" }));
   assert.deepEqual(fp, { kind: "accept" });
 });
