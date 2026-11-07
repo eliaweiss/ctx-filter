@@ -1,0 +1,36 @@
+{
+  "name": "dsh-ctx-filter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cuts mid-size tool results down to what the agent needs for its current step, using Jev, with settings and statistics.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "client.js", "lib/*.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check index.js && node --check client.js && node --check lib/core.js && node --check lib/jev.js && node --check lib/store.js"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.136",
+    "@deepseek-ai/schemastery": "3.19.0",
+    "ai": "7.0.163"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT"
+}

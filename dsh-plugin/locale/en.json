@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Context filter",
+    "description": "Cuts mid-size tool results down to what the agent needs for its current step, using Jev. Configure it and see its statistics under Settings → Context filter."
+  }
+}

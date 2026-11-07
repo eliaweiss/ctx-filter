@@ -1,0 +1,4 @@
+# Context filter: Jev-based filtering of mid-size tool results (Host + Web UI).
+- insert:
+    - id: ctx-filter
+      name: dsh-ctx-filter
