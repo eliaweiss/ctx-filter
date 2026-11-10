@@ -54,8 +54,25 @@ export function errorLineIndices(lines, max = 40) {
 export const FILE_PRINT =
   /(^|[;&|]\s*|\bcd\s+\S+\s*&&\s*)(cat|nl|head|tail|less|bat|sed\s+-n|awk\s+'NR)\b|\|\s*(head|tail)\b|\bsed\s+-n\s+['"]?\d/;
 
+/** `git diff` and `git show`, with any global options (`-C dir`, `-c k=v`, `--no-pager`): a diff is read whole. */
+export const GIT_DIFF = /\bgit(?:\s+(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?))*\s+(?:diff|show)\b/;
+
 export function isFilePrint(command) {
-  return typeof command === "string" && FILE_PRINT.test(command);
+  return typeof command === "string" && (FILE_PRINT.test(command) || GIT_DIFF.test(command));
+}
+
+/** DSH's spill folder, where full results (DSH's own and this plugin's) are stored. */
+export const SPILL_PATH = /[\\/]dsh-spill-[^\\/\s"']+[\\/]/;
+
+/**
+ * True when the call's arguments name a saved full result: the agent is reading what was cut, or what
+ * DSH's cap spilled, so cutting again would only send it back for the same file.
+ */
+export function readsSavedResult(argsText, locators) {
+  if (typeof argsText !== "string" || argsText === "") return false;
+  if (SPILL_PATH.test(argsText)) return true;
+  for (const loc of locators ?? []) if (loc && argsText.includes(loc)) return true;
+  return false;
 }
 
 /** A tool name matches an exclusion entry exactly, or by prefix when the entry ends with `*`. */
@@ -180,8 +197,23 @@ export function selectLines(lines, passages, probs, opts) {
     used += (lines[i] ?? "").length + 1;
     return true;
   };
-  if (opts.keepHead) for (let i = 0; i < Math.min(opts.headLines, lines.length); i++) if (add(i)) reasons.head++;
-  if (opts.keepTail) for (let i = Math.max(0, lines.length - opts.tailLines); i < lines.length; i++) if (add(i)) reasons.tail++;
+  // Head and tail are measured in characters: with long lines (diffs, JSON) a line count would use up
+  // the whole budget before any relevant passage gets in. A line that would pass the limit ends the run.
+  const lineCost = (i) => (lines[i] ?? "").length + 1;
+  if (opts.keepHead) {
+    let size = 0;
+    for (let i = 0; i < lines.length && size + lineCost(i) <= (opts.headChars ?? 0); i++) {
+      size += lineCost(i);
+      if (add(i)) reasons.head++;
+    }
+  }
+  if (opts.keepTail) {
+    let size = 0;
+    for (let i = lines.length - 1; i >= 0 && size + lineCost(i) <= (opts.tailChars ?? 0); i--) {
+      size += lineCost(i);
+      if (add(i)) reasons.tail++;
+    }
+  }
   if (opts.keepErrors) {
     // Error lines may use at most half the budget, so relevant passages still get room.
     for (const i of errorLineIndices(lines)) {
@@ -213,6 +245,21 @@ export function selectLines(lines, passages, probs, opts) {
   return { keep, reasons, relevantPassages, overflow, budgetChars };
 }
 
+/**
+ * Why a judged result should pass through whole instead of being cut, or null to cut it.
+ * judged: passages Jev judged; judgedRelevant: of those, at or above the threshold; overflow: relevant
+ * passages that did not fit the budget (from selectLines).
+ */
+export function passThroughAction({ judged, judgedRelevant, overflow, tokensKept, tokensBefore }, opts) {
+  if (opts.keepRelevant && judged > 0) {
+    if (judgedRelevant === 0 && opts.passThroughWhenNothingRelevant) return "nothing-relevant";
+    if (opts.passThroughRelevantPercent < 100 && (judgedRelevant / judged) * 100 >= opts.passThroughRelevantPercent) return "mostly-relevant";
+    if (opts.passThroughWhenRelevantDoesNotFit && overflow > 0) return "relevant-overflow";
+  }
+  if (tokensKept > tokensBefore * 0.8) return "no-gain";
+  return null;
+}
+
 /** Kept lines in original order with markers for each omitted gap. */
 export function renderKept(lines, keep) {
   const out = [];
@@ -232,15 +279,15 @@ export function renderKept(lines, keep) {
   return out.join("\n");
 }
 
-export function footer({ linesBefore, linesAfter, tokensBefore, tokensAfter, reasons, relevantPassages, locator, shadow }) {
+export function footer({ linesBefore, linesAfter, tokensBefore, tokensAfter, reasons, relevantPassages, locator, originalLocator, shadow }) {
   const why = [];
   if (reasons.head) why.push("head");
   if (reasons.tail) why.push("tail");
   if (reasons.errors) why.push(`${reasons.errors} error lines`);
   if (relevantPassages) why.push(`${relevantPassages} passages judged relevant to the current step`);
-  const where = locator
-    ? ` Full result: ${locator}. Use read with offset/limit, or grep this path, if you need an omitted part.`
-    : "";
+  const where =
+    (locator ? ` Full result: ${locator}. Use read with offset/limit, or grep this path, if you need an omitted part.` : "") +
+    (originalLocator ? ` Page before clutter removal: ${originalLocator}.` : "");
   return `\n\n[context filter${shadow ? " (shadow)" : ""}] Kept ${linesAfter} of ${linesBefore} lines (~${tokensAfter.toLocaleString("en-US")} of ${tokensBefore.toLocaleString("en-US")} tokens): ${why.join(", ") || "nothing matched"}.${where}`;
 }
 

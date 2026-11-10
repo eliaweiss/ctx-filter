@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { buildWant, estimateTokens, isExcluded, isFilePrint, makePassages, renderKept, selectLines, splitLines } from "../lib/core.js";
+import { buildWant, estimateTokens, isExcluded, isFilePrint, makePassages, passThroughAction, readsSavedResult, renderKept, selectLines, splitLines } from "../lib/core.js";
 import { judgePassages } from "../lib/jev.js";
 import { Config } from "../index.js";
 
@@ -33,6 +33,7 @@ for (const f of files) {
     if (tok <= cfg.minTokens || tok > cfg.maxTokens || /Full formatted result stored at/.test(text)) return;
     if (isExcluded(c.name, cfg.excludedTools)) return;
     let args = {}; try { args = JSON.parse(c.arguments); } catch {}
+    if (readsSavedResult(typeof c.arguments === "string" ? c.arguments : JSON.stringify(c.arguments ?? {}))) return;
     if (c.name === "bash" && isFilePrint(args.command)) return;
     // the agent's next text after this result
     let next = "";
@@ -62,7 +63,7 @@ for (const c of picked) {
   const share = probs.size ? rel / probs.size : 0;
   const sel = selectLines(lines, passages, probs, cfg);
   const kept = renderKept(lines, sel.keep);
-  const action = err ? "jev-error" : probs.size && rel === 0 ? "nothing-relevant" : share * 100 >= cfg.passThroughRelevantPercent ? "mostly-relevant" : estimateTokens(kept) > c.tok * 0.8 ? "no-gain" : "filtered";
+  const action = err ? "jev-error" : passThroughAction({ judged: probs.size, judgedRelevant: rel, overflow: sel.overflow, tokensKept: estimateTokens(kept), tokensBefore: c.tok }, cfg) ?? "filtered";
   const out = action === "filtered" ? kept : c.text;
   // details the agent used next that came from this output
   const used = [...distinct(c.next)].filter((w) => c.text.includes(w));

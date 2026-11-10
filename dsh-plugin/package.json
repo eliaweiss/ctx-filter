@@ -13,7 +13,7 @@
   "files": ["index.js", "client.js", "lib/*.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check index.js && node --check client.js && node --check lib/core.js && node --check lib/jev.js && node --check lib/store.js"
+    "check": "node --check index.js && node --check client.js && node --check lib/core.js && node --check lib/declutter.js && node --check lib/jev.js && node --check lib/store.js && node --check lib/sessions.js"
   },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

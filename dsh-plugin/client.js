@@ -70,6 +70,7 @@ window.__ModuleLoader__.load({
 
     const fmt = (n) => (typeof n === "number" ? n.toLocaleString("en-US") : "–");
     const usd = (n, d = 4) => (typeof n === "number" ? `$${n.toFixed(d)}` : "–");
+    const signedUsd = (n, d = 4) => (typeof n === "number" ? `${n < 0 ? "−" : "+"}$${Math.abs(n).toFixed(d)}` : "–");
     const pct = (n) => (typeof n === "number" ? `${(n * 100).toFixed(1)}%` : "–");
 
     function Switch({ checked, disabled, label, onChange }) {
@@ -188,9 +189,20 @@ window.__ModuleLoader__.load({
           num("minTokens", "Filter results above (tokens)", "Results at or below this size pass through untouched. Default 2,000.", { min: 0, step: 1 }),
           num("maxTokens", "Leave to DSH above (tokens)", "Above this size DSH's own head/tail cap handles the result. Default 12,500.", { min: 0, step: 1 }),
           num("keepPercent", "Keep at most (% of the result)", "Budget for everything kept: head, tail, error lines and relevant passages.", { min: 1, max: 100 }),
+          sw("passThroughWhenRelevantDoesNotFit", "Pass through when relevant passages do not fit", "If a passage Jev judges relevant does not fit in the budget, cutting would drop content the agent wants; keep the result whole."),
           sw("passThroughWhenNothingRelevant", "Pass through when nothing is relevant", "If Jev finds no relevant passage, the want probably missed what the agent is after; keep the result whole instead of only head, tail and errors."),
           num("passThroughRelevantPercent", "Pass through when mostly relevant (%)", "If Jev judges at least this share of the passages relevant, the whole result is signal and is kept whole. 100 turns this off.", { min: 1, max: 100 }),
           num("relevanceThreshold", "Relevance threshold", "A passage counts as relevant when Jev's probability is at least this (0–1).", { min: 0, max: 1 }),
+        ),
+        h(
+          Group,
+          { title: "Web page cleanup" },
+          sw(
+            "declutter",
+            "Remove page clutter from web_fetch results",
+            "Runs first, on every result at any size, without Jev: decodes search redirect links to the real address, drops favicons and empty or repeated links. Text and code are never removed; the original page is saved. Pays off mostly on DuckDuckGo and Bing result pages.",
+          ),
+          num("declutterMinPercent", "Use the cleaned page when it saves at least (%)", "Smaller savings keep the page exactly as fetched. Default 10.", { min: 0, max: 100 }),
         ),
         h(
           Group,
@@ -208,7 +220,8 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
-          sw("skipFilePrints", "Skip bash commands that print files", "cat, sed -n, head, tail and similar: the agent usually wants those files whole."),
+          sw("skipFilePrints", "Skip bash commands that print files or diffs", "cat, sed -n, head, tail, git diff, git show and similar: the agent usually wants those whole."),
+          sw("skipSavedReads", "Skip reads of saved full results", "A call whose arguments name a file in DSH's spill folder: the agent is reading what was cut."),
           h(AddTool, { disabled: off, onAdd: (tool) => !excluded.includes(tool) && put("excludedTools", [...excluded, tool]) }),
         ),
         h(
@@ -225,9 +238,9 @@ window.__ModuleLoader__.load({
           Group,
           { title: "What to keep" },
           sw("keepHead", "Head", "The first lines of the result."),
-          num("headLines", "Head lines", null, { min: 0, step: 1 }),
+          num("headChars", "Head size (characters)", "Whole lines from the start, up to this size.", { min: 0, step: 1 }),
           sw("keepTail", "Tail", "The last lines: exit codes, summaries."),
-          num("tailLines", "Tail lines", null, { min: 0, step: 1 }),
+          num("tailChars", "Tail size (characters)", "Whole lines from the end, up to this size.", { min: 0, step: 1 }),
           sw("keepErrors", "Error lines", "Lines that look like errors or failures, up to half the budget."),
           sw("keepRelevant", "Relevant passages", "Passages Jev judges relevant to the want. Off: no Jev call, only the rules above."),
         ),
@@ -245,8 +258,10 @@ window.__ModuleLoader__.load({
           txt("apiKeyEnv", "API key variable", "Environment variable with the gateway key."),
           txt("apiKeyCommand", "API key command", "Runs when the variable is unset. Empty: the command in ~/.ctx-filter/config.json.", { placeholder: "security find-generic-password …" }),
           num("timeoutMs", "Jev time limit (ms)", "Past it, the result passes through unchanged.", { min: 500, step: 1 }),
-          num("priceInputPerM", "Main model: uncached input, $ per million tokens", "Used only for the savings estimate. Default: Opus 4.5.", { min: 0 }),
-          num("priceCachedPerM", "Main model: cached input, $ per million tokens", "Used only for the savings estimate.", { min: 0 }),
+          num("priceInputPerM", "Main model: uncached input, $ per million tokens", "Used only for the savings estimate. Default: Claude Opus 5.5.", { min: 0 }),
+          num("priceCachedPerM", "Main model: cached input, $ per million tokens", "Used only for the savings estimate. Default: Claude Opus 5.5.", { min: 0 }),
+          num("priceCacheWritePerM", "Main model: cache write, $ per million tokens", "Prices the extra request a re-read costs (from the usage DSH recorded for it).", { min: 0 }),
+          num("priceOutputPerM", "Main model: output, $ per million tokens", "Prices the extra request a re-read costs.", { min: 0 }),
         ),
       );
     }
@@ -270,6 +285,15 @@ window.__ModuleLoader__.load({
     }
 
     function StatsTab({ stats, days, setDays, reload }) {
+      const [resetState, setResetState] = useState({});
+      const doReset = () => {
+        if (!window.confirm("Reset the statistics?\n\nThe event log is moved aside to an archive file next to it; nothing is deleted. Counting starts again from the next tool result.")) return;
+        setResetState({ busy: true });
+        fetch("/ctx-filter/api/stats/reset", { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "x-ctx-filter": "reset" } })
+          .then((r) => (r.ok ? r.json() : r.text().then((t) => Promise.reject(new Error(t || r.statusText)))))
+          .then((d) => (setResetState({ archive: d.archive }), reload()))
+          .catch((e) => setResetState({ error: String(e.message ?? e) }));
+      };
       const bar = h(
         "div",
         { className: "cfx-bar" },
@@ -283,27 +307,62 @@ window.__ModuleLoader__.load({
             [1, 7, 30, 90, 365].map((d) => h("option", { key: d, value: d }, d === 1 ? "Last day" : `Last ${d} days`)),
           ),
         ),
-        h("button", { className: "cfx-btn", type: "button", onClick: reload }, "Refresh"),
+        h(
+          "div",
+          { style: { display: "flex", gap: 6 } },
+          h("button", { className: "cfx-btn", type: "button", onClick: reload }, "Refresh"),
+          h("button", { className: "cfx-btn", type: "button", disabled: resetState.busy, onClick: doReset, title: "Start the statistics over; the old log is archived" }, resetState.busy ? "Resetting…" : "Reset statistics"),
+        ),
       );
-      if (stats.error) return h("div", null, bar, h("div", { className: "cfx-error" }, stats.error));
+      const resetNote = resetState.error
+        ? h("div", { className: "cfx-error" }, `Reset failed: ${resetState.error}`)
+        : resetState.archive
+          ? h("div", { className: "cfx-note" }, `Statistics reset. The old log is in ${resetState.archive}.`)
+          : null;
+      if (stats.error) return h("div", null, bar, resetNote, h("div", { className: "cfx-error" }, stats.error));
       const s = stats.data;
-      if (!s) return h("div", null, bar, h("div", { className: "cfx-note" }, "Loading…"));
+      if (!s) return h("div", null, bar, resetNote, h("div", { className: "cfx-note" }, "Loading…"));
       const a = s.actions ?? {};
+      const rr = s.reRead ?? {};
+      const estimated = (rr.requestsEstimated ?? 0) + (rr.laterEstimated ?? 0) + (s.laterRequests.estimated ?? 0);
       return h(
         "div",
         null,
         bar,
+        resetNote,
+        s.firstEventAt ? h("div", { className: "cfx-note" }, `Counting since ${new Date(s.firstEventAt).toLocaleString()}.`) : null,
         h(
           "div",
           { className: "cfx-tiles" },
           h(Tile, { label: "Results filtered", value: fmt(s.filtered), sub: `of ${fmt(s.results)} tool results seen` }),
           h(Tile, { label: "Tokens kept out (once)", value: fmt(s.savedOnce), sub: `${fmt(s.tokensBeforeFiltered)} → ${fmt(s.tokensAfterFiltered)} · ${pct(s.savedShareOfAllToolOutput)} of all tool output` }),
-          h(Tile, { label: "Re-sent tokens avoided", value: fmt(s.resentAvoided), sub: `avg ${s.laterRequests.average} later requests per result (${fmt(s.laterRequests.known)} known)` }),
-          h(Tile, { label: "Est. main model saving", value: usd(s.mainModelSaving, 3), sub: "at the prices set under Settings" }),
+          h(Tile, { label: "Re-sent tokens avoided", value: fmt(s.resentAvoided), sub: `avg ${s.laterRequests.average} later requests per result (${fmt(s.laterRequests.known)} known${s.laterRequests.estimated ? `, ${fmt(s.laterRequests.estimated)} estimated` : ""})` }),
+          h(Tile, { label: "Main model saving", value: usd(s.mainModelSaving, 3), sub: "tokens kept out, at the prices set under Settings" }),
           h(Tile, { label: "Jev cost", value: usd(s.jev.costUsd, 4), sub: `${fmt(s.jev.runs)} runs · ${fmt(s.jev.inputTokens)} in / ${fmt(s.jev.outputTokens)} out tokens` }),
-          h(Tile, { label: "Net saving", value: usd(s.netSaving, 3), sub: "main model saving minus Jev cost" }),
+          h(Tile, {
+            label: "Re-read cost",
+            value: usd(rr.costUsd, 3),
+            sub: `${fmt(rr.calls)} re-reads of ${fmt(rr.cuts)} cuts · extra requests ${usd(rr.requestsUsd, 3)} (${fmt(rr.requestsMeasured)} measured${rr.requestsEstimated ? `, ${fmt(rr.requestsEstimated)} estimated` : ""}) · re-read tokens ${usd(rr.tokensUsd, 3)} (${fmt(rr.tokens)} tokens, re-sent ${fmt(rr.resentTokens)})`,
+          }),
+          h(Tile, {
+            label: "Net saving",
+            value: h("span", { style: { color: s.netSaving < 0 ? "var(--dsw-alias-state-error-primary)" : undefined } }, signedUsd(s.netSaving, 3)),
+            sub: `saving − Jev − re-reads${estimated ? ` · ${fmt(estimated)} values estimated from the measured ones` : ""}`,
+          }),
           h(Tile, { label: "Delay added", value: `${fmt(s.delayMs.average)} ms`, sub: `p50 ${fmt(s.delayMs.p50)} · p95 ${fmt(s.delayMs.p95)} · total ${(s.delayMs.total / 1000).toFixed(1)} s` }),
-          h(Tile, { label: "Follow-ups (likely misses)", value: fmt(s.followups.calls), sub: `${pct(s.followups.rate)} of filtered results: the agent opened the full result` }),
+          h(Tile, {
+            label: "Reopened cuts (likely misses)",
+            value: fmt(s.followups.cuts ?? s.followups.calls),
+            sub: `${pct(s.followups.rate)} of filtered results: the agent opened the full result. Their saving ${usd(rr.savingOfReopenedUsd, 3)}, their re-read cost ${usd(rr.costUsd, 3)}. Re-running the command instead is not detected.`,
+          }),
+          s.declutter?.results
+            ? h(Tile, {
+                label: "Page clutter removed",
+                value: fmt(s.declutter.savedTokens),
+                sub: `tokens, from ${fmt(s.declutter.results)} web pages · ${fmt(s.declutter.linksDecoded)} redirect links decoded · ${fmt(s.decluttered)} passed on without a Jev cut`,
+              })
+            : null,
+          s.declutter?.shadow ? h(Tile, { label: "Clutter removal (shadow)", value: fmt(s.declutter.shadowWouldSave), sub: `tokens it would remove from ${fmt(s.declutter.shadow)} web pages` }) : null,
           h(Tile, { label: "Jev failures", value: fmt(s.failures), sub: "result passed through unchanged" }),
           h(Tile, { label: "Sessions affected", value: fmt(s.sessions.affected), sub: `${fmt(s.sessions.compactions)} compactions in them · ${fmt(s.laterRequests.compactedAfter)} results later compacted` }),
           s.shadow ? h(Tile, { label: "Shadow mode", value: fmt(s.shadow), sub: `would have kept out ${fmt(s.shadowWouldSave)} tokens` }) : null,
@@ -315,12 +374,15 @@ window.__ModuleLoader__.load({
             "div",
             { className: "cfx-note" },
             [
+              ["decluttered", "page clutter removed, then passed on"],
               ["small", "at or below the threshold"],
               ["over-cap", "above DSH's cap"],
               ["excluded", "excluded tool"],
-              ["file-print", "bash file print"],
+              ["file-print", "bash file print or git diff"],
+              ["saved-read", "reads a saved full result"],
               ["no-gain", "cut would save under 20%"],
               ["mostly-relevant", "mostly relevant, kept whole"],
+              ["relevant-overflow", "relevant passages did not fit, kept whole"],
               ["nothing-relevant", "nothing judged relevant, kept whole"],
               ["non-text", "images or other blocks"],
               ["jev-error", "Jev failed"],
@@ -337,12 +399,23 @@ window.__ModuleLoader__.load({
           h(
             "table",
             { className: "cfx-table" },
-            h("thead", null, h("tr", null, ["Tool", "Results", "Tokens seen", "Filtered", "Tokens kept out", "Follow-ups"].map((c, i) => h("th", { key: c, className: i ? "cfx-num" : undefined }, c)))),
+            h("thead", null, h("tr", null, ["Tool", "Results", "Tokens seen", "Filtered", "Tokens kept out", "Reopened", "Re-read $", "Net $"].map((c, i) => h("th", { key: c, className: i ? "cfx-num" : undefined }, c)))),
             h(
               "tbody",
               null,
               (s.byTool ?? []).slice(0, 25).map((r) =>
-                h("tr", { key: r.tool }, h("td", null, r.tool), h("td", { className: "cfx-num" }, fmt(r.results)), h("td", { className: "cfx-num" }, fmt(r.tokens)), h("td", { className: "cfx-num" }, fmt(r.filtered)), h("td", { className: "cfx-num" }, fmt(r.saved)), h("td", { className: "cfx-num" }, fmt(r.followups))),
+                h(
+                  "tr",
+                  { key: r.tool },
+                  h("td", null, r.tool),
+                  h("td", { className: "cfx-num" }, fmt(r.results)),
+                  h("td", { className: "cfx-num" }, fmt(r.tokens)),
+                  h("td", { className: "cfx-num" }, fmt(r.filtered)),
+                  h("td", { className: "cfx-num" }, fmt(r.saved)),
+                  h("td", { className: "cfx-num" }, fmt(r.followups)),
+                  h("td", { className: "cfx-num" }, r.reReadUsd ? usd(r.reReadUsd, 4) : "–"),
+                  h("td", { className: "cfx-num" }, r.netUsd ? signedUsd(r.netUsd, 4) : "–"),
+                ),
               ),
             ),
           ),
@@ -354,8 +427,23 @@ window.__ModuleLoader__.load({
               h(
                 "table",
                 { className: "cfx-table" },
-                h("thead", null, h("tr", null, ["Day", "Filtered", "Tokens kept out", "Jev cost"].map((c, i) => h("th", { key: c, className: i ? "cfx-num" : undefined }, c)))),
-                h("tbody", null, s.byDay.map((r) => h("tr", { key: r.day }, h("td", null, r.day), h("td", { className: "cfx-num" }, fmt(r.filtered)), h("td", { className: "cfx-num" }, fmt(r.saved)), h("td", { className: "cfx-num" }, usd(r.jevCost, 4))))),
+                h("thead", null, h("tr", null, ["Day", "Filtered", "Tokens kept out", "Jev cost", "Re-read cost", "Net"].map((c, i) => h("th", { key: c, className: i ? "cfx-num" : undefined }, c)))),
+                h(
+                  "tbody",
+                  null,
+                  s.byDay.map((r) =>
+                    h(
+                      "tr",
+                      { key: r.day },
+                      h("td", null, r.day),
+                      h("td", { className: "cfx-num" }, fmt(r.filtered)),
+                      h("td", { className: "cfx-num" }, fmt(r.saved)),
+                      h("td", { className: "cfx-num" }, usd(r.jevCost, 4)),
+                      h("td", { className: "cfx-num" }, usd(r.reReadUsd ?? 0, 4)),
+                      h("td", { className: "cfx-num" }, signedUsd(r.netUsd ?? 0, 4)),
+                    ),
+                  ),
+                ),
               ),
             )
           : null,
@@ -371,7 +459,7 @@ window.__ModuleLoader__.load({
       return h(
         "table",
         { className: "cfx-table" },
-        h("thead", null, h("tr", null, ["When", "Tool", "Tokens", "Lines", "Kept", "ms", "Jev $"].map((c, i) => h("th", { key: c, className: i > 1 ? "cfx-num" : undefined }, c)))),
+        h("thead", null, h("tr", null, ["When", "Tool", "Tokens", "Lines", "Kept", "ms", "Jev $", "Net $"].map((c, i) => h("th", { key: c, className: i > 1 ? "cfx-num" : undefined }, c)))),
         h(
           "tbody",
           null,
@@ -395,6 +483,11 @@ window.__ModuleLoader__.load({
               h("td", { className: "cfx-num" }, e.reasons ? `h${e.reasons.head} t${e.reasons.tail} e${e.reasons.errors} r${e.relevantPassages ?? 0}` : "–"),
               h("td", { className: "cfx-num" }, fmt(e.ms)),
               h("td", { className: "cfx-num" }, e.jev ? usd(e.jev.costUsd, 5) : "–"),
+              h(
+                "td",
+                { className: "cfx-num", title: typeof e.netUsd === "number" ? `saving ${usd(e.savingUsd, 5)} − re-read ${usd(e.reReadUsd, 5)} − Jev` : undefined },
+                typeof e.netUsd === "number" ? signedUsd(e.netUsd, 4) : "–",
+              ),
             ),
           ),
         ),

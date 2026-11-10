@@ -8,6 +8,8 @@ import {
   isExcluded,
   isFilePrint,
   makePassages,
+  passThroughAction,
+  readsSavedResult,
   renderKept,
   selectLines,
   splitLines,
@@ -18,9 +20,9 @@ const opts = {
   keepPercent: 30,
   relevanceThreshold: 0.5,
   keepHead: true,
-  headLines: 3,
+  headChars: 230, // 3 lines of the test log
   keepTail: true,
-  tailLines: 3,
+  tailChars: 230,
   keepErrors: true,
   keepRelevant: true,
 };
@@ -54,10 +56,43 @@ test("file prints and exclusions", () => {
   assert.ok(isFilePrint("cd app && sed -n '1,200p' file.swift"));
   assert.ok(isFilePrint("git log | head -50"));
   assert.ok(!isFilePrint("npm test"));
-  assert.ok(!isFilePrint("git diff --stat"));
+  assert.ok(isFilePrint("git diff eeb3cced1^1 eeb3cced1"));
+  assert.ok(isFilePrint("M=4dfe5839e; git diff $M^1 $M -- apps"));
+  assert.ok(isFilePrint("git add -A; git status --short; git diff --cached -- a.ts"));
+  assert.ok(isFilePrint("git -C /repo --no-pager show origin/dev:a.ts"));
+  assert.ok(!isFilePrint("git grep -n diff src"));
+  assert.ok(!isFilePrint("git log --oneline -20"));
   assert.ok(isExcluded("read", ["read"]));
   assert.ok(isExcluded("mcp__atlassian__getJiraIssue", ["mcp__atlassian__*"]));
   assert.ok(!isExcluded("bash", ["read", "mcp__*"]));
+});
+
+test("reads of saved full results are recognized", () => {
+  const p = "/var/folders/yb/x/T/dsh-spill-DlsYyz/session-1ad7f0f7889c/579adf91e1ca-workflow-full.txt";
+  assert.ok(readsSavedResult(JSON.stringify({ command: `python3 -c "open('${p}')"` })));
+  assert.ok(readsSavedResult('{"file_path":"/tmp/full.txt"}', ["/tmp/full.txt"]));
+  assert.ok(!readsSavedResult('{"command":"npm test"}', ["/tmp/full.txt"]));
+});
+
+test("head and tail are measured in characters", () => {
+  const long = Array.from({ length: 40 }, (_, i) => `${i} ${"z".repeat(600)}`);
+  const sel = selectLines(long, makePassages(long), new Map(), { ...opts, headChars: 400, tailChars: 800 });
+  assert.equal(sel.reasons.head, 0); // a 600-character first line does not fit in 400
+  assert.equal(sel.reasons.tail, 1);
+  const short = log(100);
+  const s2 = selectLines(short, makePassages(short), new Map(), { ...opts, keepErrors: false, headChars: 400, tailChars: 800 });
+  const fit = (ls, max) => { let n = 0, size = 0; for (const l of ls) { if (size + l.length + 1 > max) break; size += l.length + 1; n++; } return n; };
+  assert.equal(s2.reasons.head, fit(short, 400));
+  assert.equal(s2.reasons.tail, fit([...short].reverse(), 800));
+  assert.ok(s2.reasons.head >= 5 && s2.reasons.tail >= 10);
+});
+
+test("with long lines, relevant passages still fit next to head and tail", () => {
+  const long = Array.from({ length: 45 }, (_, i) => `${i} ${"z".repeat(600)}`);
+  const ps = makePassages(long);
+  const probs = new Map(ps.map((p) => [p.index, p.start >= 10 && p.start < 20 ? 0.9 : 0.1]));
+  const sel = selectLines(long, ps, probs, { ...opts, headChars: 400, tailChars: 800 });
+  assert.ok(sel.relevantPassages > 0);
 });
 
 test("selection keeps head, tail, errors and relevant passages within budget", () => {
@@ -150,13 +185,34 @@ test("stats aggregate savings, cost, follow-ups", () => {
   const s = computeStats(events, { days: 30, priceInputPerM: 5, priceCachedPerM: 0.5, sessionEvents: () => sev, now });
   assert.equal(s.filtered, 1);
   assert.equal(s.savedOnce, 3000);
-  assert.equal(s.resentAvoided, 6000);
-  assert.equal(s.mainModelSaving, Math.round(((3000 * 5 + 6000 * 0.5) / 1e6) * 1e4) / 1e4);
+  // 2 later requests, one of them the re-read request itself, which would not exist without the filter.
+  assert.equal(s.resentAvoided, 3000);
+  assert.equal(s.mainModelSaving, Math.round(((3000 * 5 + 3000 * 0.5) / 1e6) * 1e4) / 1e4);
   assert.equal(s.failures, 1);
   assert.equal(s.followups.calls, 1);
+  assert.equal(s.followups.cuts, 1);
   assert.equal(s.recent.find((e) => e.action === "filtered").followedUp, true);
   assert.equal(s.jev.costUsd, 0.0004);
   assert.equal(s.byTool.find((r) => r.tool === "bash").followups, 1);
+});
+
+test("pass-through decisions with the default settings", async () => {
+  const { Config } = await import("../index.js");
+  const c = Config({});
+  const cfg = Object.fromEntries(Object.keys(Config.dict).map((k) => [k, c[k]?.get ? c[k].get() : c[k]]));
+  assert.equal(cfg.keepPercent, 90);
+  assert.equal(cfg.passThroughRelevantPercent, 45);
+  assert.equal(cfg.passThroughWhenRelevantDoesNotFit, true);
+  assert.equal(cfg.skipSavedReads, true);
+  assert.equal(cfg.priceInputPerM, 4);
+  assert.equal(cfg.priceCachedPerM, 0.2);
+  const r = (o) => passThroughAction({ judged: 20, judgedRelevant: 4, overflow: 0, tokensKept: 1000, tokensBefore: 4000, ...o }, cfg);
+  assert.equal(r({}), null); // 20% relevant, all fits: cut
+  assert.equal(r({ judgedRelevant: 0 }), "nothing-relevant");
+  assert.equal(r({ judgedRelevant: 9 }), "mostly-relevant"); // 45%
+  assert.equal(r({ overflow: 1 }), "relevant-overflow");
+  assert.equal(passThroughAction({ judged: 20, judgedRelevant: 4, overflow: 1, tokensKept: 1000, tokensBefore: 4000 }, { ...cfg, passThroughWhenRelevantDoesNotFit: false }), null);
+  assert.equal(r({ tokensKept: 3500 }), "no-gain");
 });
 
 test("splitLines drops one trailing newline", () => {
