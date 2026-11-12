@@ -167,6 +167,10 @@ export function declutterNote(d) {
   return `\n\n[context filter] Page clutter removed (~${d.tokensBefore.toLocaleString("en-US")} → ~${d.tokensAfter.toLocaleString("en-US")} tokens${what ? `: ${what}` : ""}); no text was cut.${where}`;
 }
 
+// Marks where a link was unwrapped or dropped; resolved to a space or nothing at the end of cleanProse.
+const EDGE = "\u0001";
+const EDGES = /\u0001+/g;
+
 function cleanProse(prose, { pageUrl, isSearch, seen, stats }) {
   const codes = [];
   let s = prose.replace(/(`+)[^`\n]*?\1/g, (m) => `\u0000${codes.push(m) - 1}\u0000`);
@@ -185,12 +189,12 @@ function cleanProse(prose, { pageUrl, isSearch, seen, stats }) {
     const t = stripAngle(target);
     if (label === "") {
       stats.linksDropped++;
-      return "";
+      return EDGE;
     }
     if (/^javascript:/i.test(t) || t.startsWith("#")) {
       stats.linksUnwrapped++;
       // A footnote marker keeps its brackets, so "claim[1]" does not become "claim1".
-      return /^(?:\d{1,3}|[*†‡§])$/.test(label) ? `[${label}]` : label;
+      return /^(?:\d{1,3}|[*†‡§])$/.test(label) ? `[${label}]` : EDGE + label + EDGE;
     }
     const real = realTarget(t, pageUrl);
     if (real) {
@@ -210,12 +214,12 @@ function cleanProse(prose, { pageUrl, isSearch, seen, stats }) {
       const rest = line.replace(LINK, (m, label) => {
         if (BARE_ADDRESS.test(label.replace(/\\(.)/g, "$1").trim())) {
           stats.linksDropped++;
-          return "";
+          return EDGE;
         }
         stats.linksUnwrapped++;
-        return label;
+        return EDGE + label + EDGE;
       });
-      if (rest.trim() === "") {
+      if (rest.replace(EDGES, "").trim() === "") {
         stats.linesDropped++;
         continue;
       }
@@ -224,6 +228,14 @@ function cleanProse(prose, { pageUrl, isSearch, seen, stats }) {
     for (const k of targets) seen.add(k);
   }
   s = kept.join("\n");
+
+  // Where a link was unwrapped or dropped, words on both sides would run together ("AuthenticationAPI"):
+  // a space goes there. Anywhere else (next to a space, a line edge or punctuation) the edge leaves nothing.
+  s = s.replace(EDGES, (run, at, str) => {
+    const before = str[at - 1];
+    const after = str[at + run.length];
+    return before && after && /[\p{L}\p{N})\]]/u.test(before) && /[\p{L}\p{N}([]/u.test(after) ? " " : "";
+  });
 
   if (isSearch) {
     // Query terms in bold on result snippets.

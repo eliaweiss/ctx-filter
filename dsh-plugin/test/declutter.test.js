@@ -131,6 +131,21 @@ test("descriptive images stay, icons and empty-alt images go", () => {
   assert.equal(stats.imagesDropped, 2);
 });
 
+test("unwrapped links next to each other do not run together", () => {
+  const page = (body) => declutter(webFetch("https://docs.example.com/a", body)).text.split("\n\n").slice(2).join("\n\n");
+  // Two in-page links side by side, and two repeated nav links on one line.
+  assert.equal(page("[Skip to content](#main)[Accessibility](#a11y)\n\ntext"), "Skip to content Accessibility\n\ntext");
+  assert.equal(
+    page("[MCP Auth](/mcp-auth)\n[API Auth](/auth)\n\n[MCP Auth](/mcp-auth \"MCP Auth\")[API Auth](/auth \"API Auth\")"),
+    "[MCP Auth](/mcp-auth)\n[API Auth](/auth)\n\nMCP Auth API Auth",
+  );
+  // Next to spaces, punctuation or formatting, nothing is added.
+  assert.equal(page("Go ([here](#x)), **[bold](#y)** and [Bob](#z)'s note."), "Go (here), **bold** and Bob's note.");
+  assert.equal(page("claim[1](#fn:1) and more"), "claim[1] and more");
+  // A dropped bare address between two words leaves a space.
+  assert.equal(page("[Site](https://a.example/x)\n\nsee[a.example/x](https://a.example/x)now"), "[Site](https://a.example/x)\n\nsee now");
+});
+
 test("the note says what was removed and where the original is", () => {
   const n = declutterNote({ tokensBefore: 3000, tokensAfter: 1000, linksDecoded: 30, imagesDropped: 10, linksDropped: 20, linesDropped: 12, locator: "/tmp/x.txt" });
   assert.match(n, /~3,000 → ~1,000 tokens: 30 redirect links decoded, 42 icons, empty or repeated links removed\); no text was cut\. Original page: \/tmp\/x\.txt\./);
